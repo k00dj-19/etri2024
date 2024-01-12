@@ -155,12 +155,10 @@ class Transformer(nn.Module):
                                                         video_length=video_length)  # (L, batch_size, d)
         print(src_vid.shape, src_aud.shape, token.shape) # (76,32,256) (76,32,256) (4,32,256)
         
-        # video, audio feature를 각각 text query를 활용한 cross-attention을 통해 연관성을 학습한다.
-        # text를 따로 input parameter로 가져왔으니 아래 t2v_encoder를 수정하든지, 아니면 들어가는 src에 포함해서 하든지
-
-        # 방법 1. video, audio concate해서 진행
-        # 방법 2. video, audio 각각 진행 후 나중에 합침.
-
+        # src = src.permute(1, 0, 2)  # (L, batch_size, d)
+        # pos_embed = pos_embed.permute(1, 0, 2)   # (L, batch_size, d)
+        # refpoint_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)  # (#queries, batch_size, d)
+        
         src = self.t2v_encoder(src, src_key_padding_mask=mask, pos=pos_embed, video_length=video_length)  # (L, batch_size, d)
         
         # print('after encoder : ',src.shape)

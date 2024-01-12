@@ -92,7 +92,7 @@ class QDDETR(nn.Module):
         self.global_rep_token = torch.nn.Parameter(torch.randn(hidden_dim))
         self.global_rep_pos = torch.nn.Parameter(torch.randn(hidden_dim))
 
-    def forward(self, src_txt, src_txt_mask, src_vid, src_vid_mask, src_aud, src_aud_mask=None):
+    def forward(self, src_txt, src_txt_mask, src_vid, src_vid_mask, src_aud, src_aud_mask):
         """The forward expects two tensors:
                - src_txt: [batch_size, L_txt, D_txt]
                - src_txt_mask: [batch_size, L_txt], containing 0 on padded pixels,
@@ -109,63 +109,51 @@ class QDDETR(nn.Module):
                - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
                                 dictionnaries containing the two above keys for each decoder layer.
         """
-        src_aud = self.input_aud_proj(src_aud)   
-        src_vid = self.input_vid_proj(src_vid)
-        src_txt = self.input_txt_proj(src_txt)
-        #src_vt = torch.cat([src_vid, src_txt], dim=1)  # (bsz, L_vid+L_txt, d)
-        
-        #mask = torch.cat([src_vid_mask, src_txt_mask], dim=1).bool()  # (bsz, L_vid+L_txt)
+        if src_aud is not None:
+            #print(src_vid.shape, src_aud.shape) # (bsz, L_vid, d=2818), (bsz, L_aud, d=2050)
+            #src_vid = torch.cat([src_vid, src_aud], dim=2)
+            #print(src_vid.shape) # (bsz, L_vid, d=4868)
+            src_aud = self.input_aud_proj(src_aud)  # (bsz, L_aud, d) (32, 75, d=256)
+            # print("src_aud :",src_aud.shape)    
+        src_vid = self.input_vid_proj(src_vid)  # (bsz, L_vid, d) (32, 75, d=256)
+        src_txt = self.input_txt_proj(src_txt)  # (bsz, L_txt, d) (32, 24ex, d=256)
+        # print(src_vid.shape, src_txt.shape) # (bsz, L_vid, d=2818), (bsz, L_txt, d=2818)
+            
+        # src : video + text, src_a : audio + text
+        src = torch.cat([src_vid, src_txt], dim=1)  # (bsz, L_vid+L_txt, d)
+        src_a = torch.cat([src_aud, src_txt], dim=1) if src_aud is not None else src
+        #print("src_a :",src_a.shape) # (bsz, L_vid+L_txt, d)
+        #print(src_vid_mask, src_txt_mask.shape, src_aud_mask.shape) # (bsz, L_vid), (bsz, L_txt), (bsz, L_aud)
+        mask = torch.cat([src_vid_mask, src_txt_mask], dim=1).bool()  # (bsz, L_vid+L_txt)
+        mask_a = torch.cat([src_aud_mask, src_txt_mask], dim=1).bool() if src_aud is not None else mask
         # TODO should we remove or use different positional embeddings to the src_txt?
         pos_vid = self.position_embed(src_vid, src_vid_mask)  # (bsz, L_vid, d)
-        pos_aud = self.position_embed(src_aud, src_aud_mask)  # (bsz, L_aud, d)
+        pos_aud = self.position_embed(src_aud, src_aud_mask) if src_aud is not None else pos_vid
         pos_txt = self.txt_position_embed(src_txt) if self.use_txt_pos else torch.zeros_like(src_txt)  # (bsz, L_txt, d)
         # pos_txt = torch.zeros_like(src_txt)
         # pad zeros for txt positions
-        #pos = torch.cat([pos_vid, pos_txt], dim=1)
+        pos = torch.cat([pos_vid, pos_txt], dim=1)
+        pos_a = torch.cat([pos_aud, pos_txt], dim=1) if src_aud is not None else pos
         # (#layers, bsz, #queries, d), (bsz, L_vid+L_txt, d)
 
         # for global token
-        vid_mask = src_vid_mask.bool()
-        aud_mask = src_aud_mask.bool()
-        txt_mask = src_txt_mask.bool()
-        vid_mask_ = torch.tensor([[True]]).to(vid_mask.device).repeat(vid_mask.shape[0], 1)
-        vid_mask = torch.cat([vid_mask_, vid_mask], dim=1)
-        src_vid_ = self.global_rep_token.reshape([1, 1, self.hidden_dim]).repeat(src_vid.shape[0], 1, 1)
-        src_vid = torch.cat([src_vid_, src_vid], dim=1)
-        pos_vid_ = self.global_rep_pos.reshape([1, 1, self.hidden_dim]).repeat(pos_vid.shape[0], 1, 1)
-        pos_vid = torch.cat([pos_vid_, pos_vid], dim=1)
-
-        aud_mask_ = torch.tensor([[True]]).to(aud_mask.device).repeat(aud_mask.shape[0], 1)
-        aud_mask = torch.cat([aud_mask_, aud_mask], dim=1)
-        src_aud_ = self.global_rep_token.reshape([1, 1, self.hidden_dim]).repeat(src_aud.shape[0], 1, 1)
-        src_aud = torch.cat([src_aud_, src_aud], dim=1)
-        pos_aud_ = self.global_rep_pos.reshape([1, 1, self.hidden_dim]).repeat(pos_aud.shape[0], 1, 1)
-        pos_aud = torch.cat([pos_aud_, pos_aud], dim=1)
-
-        txt_mask_ = torch.tensor([[True]]).to(txt_mask.device).repeat(txt_mask.shape[0], 1)
-        txt_mask = torch.cat([txt_mask_, txt_mask], dim=1)
-        src_txt_ = self.global_rep_token.reshape([1, 1, self.hidden_dim]).repeat(src_txt.shape[0], 1, 1)
-        src_txt = torch.cat([src_txt_, src_txt], dim=1)
-        pos_txt_ = self.global_rep_pos.reshape([1, 1, self.hidden_dim]).repeat(pos_txt.shape[0], 1, 1)
-        pos_txt = torch.cat([pos_txt_, pos_txt], dim=1)
-        
+        mask_ = torch.tensor([[True]]).to(mask.device).repeat(mask.shape[0], 1)
+        mask_a_ = torch.tensor([[True]]).to(mask_a.device).repeat(mask_a.shape[0], 1)
+        mask = torch.cat([mask_, mask], dim=1)
+        mask_a = torch.cat([mask_a_, mask_a], dim=1)
+        src_ = self.global_rep_token.reshape([1, 1, self.hidden_dim]).repeat(src.shape[0], 1, 1)
+        src_a_ = self.global_rep_token.reshape([1, 1, self.hidden_dim]).repeat(src_a.shape[0], 1, 1)
+        src = torch.cat([src_, src], dim=1)
+        src_a = torch.cat([src_a_, src_a], dim=1)
+        pos_ = self.global_rep_pos.reshape([1, 1, self.hidden_dim]).repeat(pos.shape[0], 1, 1)
+        pos_a_ = self.global_rep_pos.reshape([1, 1, self.hidden_dim]).repeat(pos_a.shape[0], 1, 1)
+        pos = torch.cat([pos_, pos], dim=1)
+        pos_a = torch.cat([pos_a_, pos_a], dim=1)
 
         video_length = src_vid.shape[1]
         #print("src:", src.shape, "mask:",mask.shape)
-        # video, audio 각각 self-attention 후 bottleneck encoder를 통해 나온 features를 text와 cross-attention
-        hs, reference, memory, memory_global = self.transformer(
-            src_vid,
-            src_aud,
-            src_txt,
-            vid_mask = ~vid_mask,
-            aud_mask = ~aud_mask,
-            txt_mask = ~txt_mask,
-            query_embed = self.query_embed.weight,
-            pos_embed_vid = pos_vid,
-            pos_embed_aud = pos_aud,   
-            video_length=video_length)
-        
-
+        #hs, reference, memory, memory_global = self.transformer(src, ~mask, self.query_embed.weight, pos, video_length=video_length)
+        hs, reference, memory, memory_global = self.transformer(src, src_a, ~mask, ~mask_a, self.query_embed.weight, pos, pos_a, video_length=video_length)
         #print("hs:", hs.shape, "ref:", reference.shape, "memory:", memory.shape, "memory_global:",memory_global.shape)
         outputs_class = self.class_embed(hs)  # (#layers, batch_size, #queries, #classes)
         reference_before_sigmoid = inverse_sigmoid(reference)
@@ -197,19 +185,36 @@ class QDDETR(nn.Module):
         ### Neg Pairs ###
         src_txt_neg = torch.cat([src_txt[1:], src_txt[0:1]], dim=0)
         src_txt_mask_neg = torch.cat([src_txt_mask[1:], src_txt_mask[0:1]], dim=0)
+
         src_neg = torch.cat([src_vid, src_txt_neg], dim=1)
         mask_neg = torch.cat([src_vid_mask, src_txt_mask_neg], dim=1).bool()
-
         mask_neg = torch.cat([mask_, mask_neg], dim=1)
         src_neg = torch.cat([src_, src_neg], dim=1)
         pos_neg = pos.clone()  # since it does not use actual content
 
-        _, _, memory_neg, memory_global_neg = self.transformer(src_neg, ~mask_neg, self.query_embed.weight, pos_neg, video_length=video_length)
+        if src_aud is not None:
+            src_a_neg = torch.cat([src_aud, src_txt_neg], dim=1)
+            mask_a_neg = torch.cat([src_aud_mask, src_txt_mask_neg], dim=1).bool()
+            mask_a_neg = torch.cat([mask_a_, mask_a_neg], dim=1)
+            src_a_neg = torch.cat([src_a_, src_a_neg], dim=1)
+            pos_a_neg = pos_a.clone()  # since it does not use actual content
+
+        _, _, memory_neg, memory_global_neg = self.transformer(
+            src_neg,
+            src_a=src_a_neg if src_aud is not None else None,
+            mask=~mask_neg ,
+            mask_a=~mask_a_neg  if src_aud is not None else None,
+            query_embed=self.query_embed.weight,
+            pos_embed=pos_neg,
+            pos_embed_a=pos_a_neg   if src_aud is not None else None,
+            video_length=video_length
+        )
+
         vid_mem_neg = memory_neg[:, :src_vid.shape[1]]
 
 
         out["saliency_scores"] = (torch.sum(self.saliency_proj1(vid_mem) * self.saliency_proj2(memory_global).unsqueeze(1), dim=-1) / np.sqrt(self.hidden_dim))
-
+        
         out["saliency_scores_neg"] = (torch.sum(self.saliency_proj1(vid_mem_neg) * self.saliency_proj2(memory_global_neg).unsqueeze(1), dim=-1) / np.sqrt(self.hidden_dim))
         #print("saliency_scores:", out["saliency_scores"].shape, "saliency_scores_neg:", out["saliency_scores_neg"].shape)
         # print(src_vid_mask.shape, src_vid.shape, vid_mem_neg.shape, vid_mem.shape)

@@ -73,6 +73,11 @@ class QDDETR(nn.Module):
             LinearLayer(hidden_dim, hidden_dim, layer_norm=True, dropout=input_dropout, relu=relu_args[1]),
             LinearLayer(hidden_dim, hidden_dim, layer_norm=True, dropout=input_dropout, relu=relu_args[2])
         ][:n_input_proj])
+        self.input_aud_proj = nn.Sequential(*[
+            LinearLayer(aud_dim, hidden_dim, layer_norm=True, dropout=input_dropout, relu=relu_args[0]),
+            LinearLayer(hidden_dim, hidden_dim, layer_norm=True, dropout=input_dropout, relu=relu_args[1]),
+            LinearLayer(hidden_dim, hidden_dim, layer_norm=True, dropout=input_dropout, relu=relu_args[2])
+        ][:n_input_proj])
         self.contrastive_align_loss = contrastive_align_loss
         if contrastive_align_loss:
             self.contrastive_align_projection_query = nn.Linear(hidden_dim, contrastive_hdim)
@@ -87,7 +92,7 @@ class QDDETR(nn.Module):
         self.global_rep_token = torch.nn.Parameter(torch.randn(hidden_dim))
         self.global_rep_pos = torch.nn.Parameter(torch.randn(hidden_dim))
 
-    def forward(self, src_txt, src_txt_mask, src_vid, src_vid_mask, src_aud=None, src_aud_mask=None):
+    def forward(self, src_txt, src_txt_mask, src_vid, src_vid_mask, src_aud, src_aud_mask=None):
         """The forward expects two tensors:
                - src_txt: [batch_size, L_txt, D_txt]
                - src_txt_mask: [batch_size, L_txt], containing 0 on padded pixels,
@@ -104,32 +109,60 @@ class QDDETR(nn.Module):
                - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
                                 dictionnaries containing the two above keys for each decoder layer.
         """
-        if src_aud is not None:
-            src_vid = torch.cat([src_vid, src_aud], dim=2)
-            
+        src_aud = self.input_aud_proj(src_aud)   
         src_vid = self.input_vid_proj(src_vid)
         src_txt = self.input_txt_proj(src_txt)
-        src = torch.cat([src_vid, src_txt], dim=1)  # (bsz, L_vid+L_txt, d)
-        mask = torch.cat([src_vid_mask, src_txt_mask], dim=1).bool()  # (bsz, L_vid+L_txt)
+        src_vt = torch.cat([src_vid, src_txt], dim=1)  # (bsz, L_vid+L_txt, d)
+        
+        #mask = torch.cat([src_vid_mask, src_txt_mask], dim=1).bool()  # (bsz, L_vid+L_txt)
         # TODO should we remove or use different positional embeddings to the src_txt?
         pos_vid = self.position_embed(src_vid, src_vid_mask)  # (bsz, L_vid, d)
+        pos_aud = self.position_embed(src_aud, src_aud_mask)  # (bsz, L_aud, d)
         pos_txt = self.txt_position_embed(src_txt) if self.use_txt_pos else torch.zeros_like(src_txt)  # (bsz, L_txt, d)
         # pos_txt = torch.zeros_like(src_txt)
         # pad zeros for txt positions
-        pos = torch.cat([pos_vid, pos_txt], dim=1)
+        #pos = torch.cat([pos_vid, pos_txt], dim=1)
         # (#layers, bsz, #queries, d), (bsz, L_vid+L_txt, d)
 
         # for global token
-        mask_ = torch.tensor([[True]]).to(mask.device).repeat(mask.shape[0], 1)
-        mask = torch.cat([mask_, mask], dim=1)
-        src_ = self.global_rep_token.reshape([1, 1, self.hidden_dim]).repeat(src.shape[0], 1, 1)
-        src = torch.cat([src_, src], dim=1)
-        pos_ = self.global_rep_pos.reshape([1, 1, self.hidden_dim]).repeat(pos.shape[0], 1, 1)
-        pos = torch.cat([pos_, pos], dim=1)
+        vid_mask_ = torch.tensor([[True]]).to(src_vid_mask.device).repeat(src_vid_mask.shape[0], 1)
+        vid_mask = torch.cat([vid_mask_, src_vid_mask], dim=1)
+        src_vid_ = self.global_rep_token.reshape([1, 1, self.hidden_dim]).repeat(src_vid.shape[0], 1, 1)
+        src_vid = torch.cat([src_vid_, src_vid], dim=1)
+        pos_vid_ = self.global_rep_pos.reshape([1, 1, self.hidden_dim]).repeat(pos_vid.shape[0], 1, 1)
+        pos_vid = torch.cat([pos_vid_, pos_vid], dim=1)
+
+        aud_mask_ = torch.tensor([[True]]).to(src_aud_mask.device).repeat(src_aud_mask.shape[0], 1)
+        aud_mask = torch.cat([aud_mask_, src_aud_mask], dim=1)
+        src_aud_ = self.global_rep_token.reshape([1, 1, self.hidden_dim]).repeat(src_aud.shape[0], 1, 1)
+        src_aud = torch.cat([src_aud_, src_aud], dim=1)
+        pos_aud_ = self.global_rep_pos.reshape([1, 1, self.hidden_dim]).repeat(pos_aud.shape[0], 1, 1)
+        pos_aud = torch.cat([pos_aud_, pos_aud], dim=1)
+
+        txt_mask_ = torch.tensor([[True]]).to(src_txt_mask.device).repeat(src_txt_mask.shape[0], 1)
+        txt_mask = torch.cat([txt_mask_, src_txt_mask], dim=1)
+        src_txt_ = self.global_rep_token.reshape([1, 1, self.hidden_dim]).repeat(src_txt.shape[0], 1, 1)
+        src_txt = torch.cat([src_txt_, src_txt], dim=1)
+        pos_txt_ = self.global_rep_pos.reshape([1, 1, self.hidden_dim]).repeat(pos_txt.shape[0], 1, 1)
+        pos_txt = torch.cat([pos_txt_, pos_txt], dim=1)
+        
 
         video_length = src_vid.shape[1]
         #print("src:", src.shape, "mask:",mask.shape)
-        hs, reference, memory, memory_global = self.transformer(src, ~mask, self.query_embed.weight, pos, video_length=video_length)
+        # video, audio 각각 self-attention 후 bottleneck encoder를 통해 나온 features를 text와 cross-attention
+        hs, reference, memory, memory_global = self.transformer(
+            src_vid,
+            src_aud,
+            src_txt,
+            vid_mask = ~vid_mask,
+            aud_mask = ~aud_mask,
+            txt_mask = ~txt_mask,
+            query_embed = self.query_embed.weight,
+            pos_embed_vid = pos_vid,
+            pos_embed_aud = pos_aud,   
+            video_length=video_length)
+        
+
         #print("hs:", hs.shape, "ref:", reference.shape, "memory:", memory.shape, "memory_global:",memory_global.shape)
         outputs_class = self.class_embed(hs)  # (#layers, batch_size, #queries, #classes)
         reference_before_sigmoid = inverse_sigmoid(reference)
