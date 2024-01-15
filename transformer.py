@@ -110,7 +110,7 @@ class Transformer(nn.Module):
                 nn.init.xavier_uniform_(p)
 
     # for tvsum, add video_length in argument
-    def forward(self, src_vid, src_aud, src_txt, vid_mask, aud_mask, txt_mask, query_embed, pos_embed_vid, pos_embed_aud, video_length=None):
+    def forward(self, src_vid, src_aud, src_txt, vid_mask, aud_mask, txt_mask, query_embed, pos_embed_vid, pos_embed_aud, pos_embed_txt, video_length=None):
         """
         Args:
             src: (batch_size, L, d)
@@ -128,11 +128,14 @@ class Transformer(nn.Module):
         src_txt = src_txt.permute(1, 0, 2)  # (L, batch_size, d)
         pos_embed_vid = pos_embed_vid.permute(1, 0, 2)   # (L, batch_size, d)
         pos_embed_aud = pos_embed_aud.permute(1, 0, 2)   # (L, batch_size, d)
-        #pos_embed_txt = pos_embed_txt.permute(1, 0, 2)   # (L, batch_size, d)
+        pos_embed_txt = pos_embed_txt.permute(1, 0, 2)   # (L, batch_size, d)
         refpoint_embed = query_embed.unsqueeze(1).repeat(1, bs, 1)  # (#queries, batch_size, d)
-        print("vid_mask", vid_mask.shape)   #[32,76]
-        print("aud_mask", aud_mask.shape)   #[32,76]
-        print("txt_mask", txt_mask.shape)   #[32,23]
+        # print("vid_mask", vid_mask.shape)   #[32,76]
+        # print("aud_mask", aud_mask.shape)   #[32,76]
+        # print("txt_mask", txt_mask.shape)   #[32,23]
+        # print("pos_embed_vid", pos_embed_vid.shape)   #[76,32,256]
+        # print("pos_embed_aud", pos_embed_aud.shape)   #[76,32,256]
+        # print("pos_embed_txt", pos_embed_txt.shape)   #[23,32,256]
         # video, audio 각각 self-attention을 수행한다.
         src_vid = self.self_attn_encoder(src_vid, src_key_padding_mask=vid_mask, pos=pos_embed_vid)  # (L, batch_size, d)
         src_aud = self.self_attn_encoder(src_aud, src_key_padding_mask=aud_mask, pos=pos_embed_aud)  # (L, batch_size, d)
@@ -141,7 +144,8 @@ class Transformer(nn.Module):
         token_mask = torch.ones(bs, 4, dtype=torch.bool).cuda()
         # size [32,4] 만큼의 mask 생성한다
         
-
+        #print(src_vid)
+        #print(src_aud) # 값이 잘나옴
 
         # video, audio feature를 bottlenect encoder를 통해 연관성을 학습한다.
         src_vid, src_aud, token = self.bottleneck_encoder(src_vid, 
@@ -153,22 +157,119 @@ class Transformer(nn.Module):
                                                         pos_vid=pos_embed_vid,
                                                         pos_aud=pos_embed_aud,
                                                         video_length=video_length)  # (L, batch_size, d)
-        print(src_vid.shape, src_aud.shape, token.shape) # (76,32,256) (76,32,256) (4,32,256)
+        # print(src_vid.shape, src_aud.shape, token.shape) # (76,32,256) (76,32,256) (4,32,256)   => 1+75 : 1은 global token, 75는 local token
+        # print(src_txt.shape)    # (25,32,256) => 1+24 : 1은 global token, 24는 local token
+    
+        # src_txt의 global feature를 가져온다.
+        src_txt_global = src_txt[0].unsqueeze(0)  # (1, batch_size, d)
+        src_txt_local = src_txt[1:]  # (L_txt-1, batch_size, d)
+        # src_vid의 global feature를 가져온다.
+        src_vid_global = src_vid[0].unsqueeze(0)  # (1, batch_size, d)
+        src_vid_local = src_vid[1:]  # (L_vid-1, batch_size, d)
+        # src_aud의 global feature를 가져온다.
+        src_aud_global = src_aud[0].unsqueeze(0)  # (1, batch_size, d)
+        src_aud_local = src_aud[1:]  # (L_aud-1, batch_size, d)
+        # print("src_aud_local", src_aud_local.shape) # (75,32,256)
+        # print("src_vid_local", src_vid_local.shape) # (75,32,256)
+        # print("src_txt_local", src_txt_local.shape) # (24,32,256)
+        src_aud_txt_global = (src_aud_global + src_txt_global) / 2
+        src_vid_txt_global = (src_vid_global + src_txt_global) / 2
+        # print("src_aud_txt_global", src_aud_txt_global.shape) # (1,32,256)
+        # print("src_vid_txt_global", src_vid_txt_global.shape) # (1,32,256)
+        src_aud_txt_local = torch.cat((src_aud_local, src_txt_local), dim=0)
+        src_vid_txt_local = torch.cat((src_vid_local, src_txt_local), dim=0)
+        # print("src_aud_txt_local", src_aud_txt_local.shape) # (99,32,256)
+        # print("src_vid_txt_local", src_vid_txt_local.shape) # (99,32,256)
+        src_aud_txt = torch.cat((src_aud_txt_global, src_aud_txt_local), dim=0)
+        src_vid_txt = torch.cat((src_vid_txt_global, src_vid_txt_local), dim=0)
+
+        # print("src_aud_txt", src_aud_txt.shape) # (100,32,256)
+        # print("src_vid_txt", src_vid_txt.shape) # (100,32,256)
+
+        # print("vid_mask", vid_mask.shape) # (32,76)
+        # print("aud_mask", aud_mask.shape) # (32,76)
+        # print("txt_mask", txt_mask.shape) # (32,25)
+
+        vid_mask_global = vid_mask[:, 0].unsqueeze(1)  # (batch_size, 1)
+        vid_mask_local = vid_mask[:, 1:]  # (batch_size, L_vid-1)
+        aud_mask_global = aud_mask[:, 0].unsqueeze(1)  # (batch_size, 1)
+        aud_mask_local = aud_mask[:, 1:]  # (batch_size, L_aud-1)
+        txt_mask_global = txt_mask[:, 0].unsqueeze(1)  # (batch_size, 1)
+        txt_mask_local = txt_mask[:, 1:]  # (batch_size, L_txt-1)
+
+        vid_txt_mask_global = vid_mask_global + txt_mask_global
+        vid_txt_mask_local = torch.cat((vid_mask_local, txt_mask_local), dim=1)
+        aud_txt_mask_global = aud_mask_global + txt_mask_global
+        aud_txt_mask_local = torch.cat((aud_mask_local, txt_mask_local), dim=1)
+        vid_txt_mask = torch.cat((vid_txt_mask_global, vid_txt_mask_local), dim=1)
+        aud_txt_mask = torch.cat((aud_txt_mask_global, aud_txt_mask_local), dim=1)
+
+        pos_embed_vid_global = pos_embed_vid[0].unsqueeze(0)  # (1, batch_size, d)
+        pos_embed_vid_local = pos_embed_vid[1:]  # (L_vid-1, batch_size, d)
+        pos_embed_aud_global = pos_embed_aud[0].unsqueeze(0)  # (1, batch_size, d)
+        pos_embed_aud_local = pos_embed_aud[1:]  # (L_aud-1, batch_size, d)
+        pos_embed_txt_global = pos_embed_txt[0].unsqueeze(0)  # (1, batch_size, d)
+        pos_embed_txt_local = pos_embed_txt[1:]  # (L_txt-1, batch_size, d)
+
+        pos_embed_vid_txt_global = (pos_embed_vid_global + pos_embed_txt_global) / 2
+        pos_embed_vid_txt_local = torch.cat((pos_embed_vid_local, pos_embed_txt_local), dim=0)
+        pos_embed_aud_txt_global = (pos_embed_aud_global + pos_embed_txt_global) / 2
+        pos_embed_aud_txt_local = torch.cat((pos_embed_aud_local, pos_embed_txt_local), dim=0)
+        pos_embed_vid_txt = torch.cat((pos_embed_vid_txt_global, pos_embed_vid_txt_local), dim=0)
+        pos_embed_aud_txt = torch.cat((pos_embed_aud_txt_global, pos_embed_aud_txt_local), dim=0)
+
+        src_vid_txt = self.t2v_encoder(src_vid_txt, src_key_padding_mask=vid_txt_mask, pos=pos_embed_vid_txt, video_length=video_length)  # (L, batch_size, d)
+        src_aud_txt = self.t2v_encoder(src_aud_txt, src_key_padding_mask=aud_txt_mask, pos=pos_embed_aud_txt, video_length=video_length)  # (L, batch_size, d)
         
+        # print('after encoder_vt : ',src_vid_txt.shape)
+        # print('after encoder_at : ',src_aud_txt.shape)
+        #src_aud_txt 
         # video, audio feature를 각각 text query를 활용한 cross-attention을 통해 연관성을 학습한다.
         # text를 따로 input parameter로 가져왔으니 아래 t2v_encoder를 수정하든지, 아니면 들어가는 src에 포함해서 하든지
 
         # 방법 1. video, audio concate해서 진행
         # 방법 2. video, audio 각각 진행 후 나중에 합침.
 
-        src = self.t2v_encoder(src, src_key_padding_mask=mask, pos=pos_embed, video_length=video_length)  # (L, batch_size, d)
+        #src = self.t2v_encoder(src, src_key_padding_mask=mask, pos=pos_embed, video_length=video_length)  # (L, batch_size, d)
         
         # print('after encoder : ',src.shape)
         # video feature만 활용하여 self-attention을 수행한다.
-        src = src[:video_length + 1]
-        mask = mask[:, :video_length + 1]
-        pos_embed = pos_embed[:video_length + 1]
-        memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)  # (L, batch_size, d)
+
+        after_memory = False
+
+        if after_memory:
+            src_vt = src_vid_txt[:video_length + 1]
+            mask_vt = vid_txt_mask[:, :video_length + 1]
+            pos_embed_vt = pos_embed_vid_txt[:video_length + 1]
+            memory_vt = self.encoder(src_vt, src_key_padding_mask=mask_vt, pos=pos_embed_vt)  # (L, batch_size, d)
+
+            src_at = src_aud_txt[:video_length + 1]
+            mask_at = aud_txt_mask[:, :video_length + 1]
+            pos_embed_at = pos_embed_aud_txt[:video_length + 1]
+            memory_at = self.encoder(src_at, src_key_padding_mask=mask_at, pos=pos_embed_at)  # (L, batch_size, d)
+            
+            memory = (memory_vt + memory_at) / 2
+            mask = mask_vt + mask_at
+            pos_embed = (pos_embed_vt + pos_embed_at) / 2
+        else:
+            src = (src_vid_txt + src_aud_txt) / 2
+            src = src[:video_length + 1]
+            mask = vid_txt_mask + aud_txt_mask
+            mask = mask[:, :video_length + 1]
+            pos_embed = (pos_embed_vid_txt + pos_embed_aud_txt) / 2
+            pos_embed = pos_embed[:video_length + 1]
+            memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)  # (L, batch_size, d)
+        # memory_vt_global, memory_vt_local = memory_vt[0], memory_vt[1:]
+        # memory_at_global, memory_at_local = memory_at[0], memory_at[1:]
+        # mask_vt_local = mask_vt[:, 1:]
+        # pos_embed_vt_local = pos_embed_vt[1:]
+        # mask_at_local = mask_at[:, 1:]
+        # pos_embed_at_local = pos_embed_at[1:]
+
+        # src = src[:video_length + 1]
+        # mask = mask[:, :video_length + 1]
+        # pos_embed = pos_embed[:video_length + 1]
+        # memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)  # (L, batch_size, d)
         memory_global, memory_local = memory[0], memory[1:]
         mask_local = mask[:, 1:]
         pos_embed_local = pos_embed[1:]
@@ -228,6 +329,7 @@ class Bottleneck_TransformerEncoderLayer(nn.Module):
                  activation="relu", normalize_before=False):
         super().__init__()
         self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        self.self_attn2 = nn.MultiheadAttention(embed_dim=256, num_heads=nhead, dropout=dropout)
         # Implementation of Feedforward model
         self.linear1 = nn.Linear(d_model, dim_feedforward)
         self.dropout = nn.Dropout(dropout)
@@ -269,23 +371,26 @@ class Bottleneck_TransformerEncoderLayer(nn.Module):
         v_vid = src_vid
         v_aud = src_aud
 
-        token_v = self.self_attn(token, k_vid, v_vid, attn_mask=src_mask,
+        token_v = self.self_attn(token, k_vid, value=v_vid, attn_mask=src_mask,
                                   key_padding_mask=src_key_padding_mask_vid)[0]
-        token_a = self.self_attn(token, k_aud, v_aud, attn_mask=src_mask,
+        token_a = self.self_attn(token, k_aud, value=v_aud, attn_mask=src_mask,
                                 key_padding_mask=src_key_padding_mask_aud)[0]
+
         token = token_v + token_a + token
         token = self.norm1(token)
 
         q_vid = self.with_pos_embed(src_vid, pos_vid)
         q_aud = self.with_pos_embed(src_aud, pos_aud)
 
-        src_vid2 = self.self_attn(q_vid, token, value=token, attn_mask=src_mask,
-                                    key_padding_mask=token_key_padding_mask)[0]
+        src_vid2 = self.self_attn2(q_vid, token, value=token, attn_mask=src_mask,
+                                    key_padding_mask=None)[0]
+
         src_vid2 = src_vid + self.dropout1(src_vid2)
-        src_aud2 = self.self_attn(q_aud, token, value=token, attn_mask=src_mask,
-                                    key_padding_mask=token_key_padding_mask)[0]
+        src_aud2 = self.self_attn2(q_aud, token, value=token, attn_mask=src_mask,
+                                    key_padding_mask=None)[0]
+
         src_aud2 = src_aud + self.dropout2(src_aud2)
-        
+
         src_vid2 = self.norm2(src_vid2)
         src_aud2 = self.norm3(src_aud2)
 

@@ -415,7 +415,7 @@ class T2V_TransformerEncoderLayer(nn.Module):
         # print('before src shape :', src.shape)
         pos_src = self.with_pos_embed(src, pos)
         global_token, q, k, v = src[0].unsqueeze(0), pos_src[1:video_length + 1], pos_src[video_length + 1:], src[video_length + 1:]
-
+        
         # print(src_key_padding_mask.shape) # torch.Size([32, 102])
         # print(src_key_padding_mask[:, 1:76].permute(1,0).shape) # torch.Size([75, 32])
         # print(src_key_padding_mask[:, 76:].shape) # torch.Size([32, 26])
