@@ -143,23 +143,26 @@ class Transformer(nn.Module):
         token = torch.rand(4, bs, d).cuda() # (4,32,256) => umt 논문에서 사용한 bottleneck token
         token_mask = torch.ones(bs, 4, dtype=torch.bool).cuda()
         # size [32,4] 만큼의 mask 생성한다
-        
+        experiment = 'umt' # umt, joint
         #print(src_vid)
         #print(src_aud) # 값이 잘나옴
-
-        # video, audio feature를 bottlenect encoder를 통해 연관성을 학습한다.
-        src_vid, src_aud, token = self.bottleneck_encoder(src_vid, 
-                                                        src_aud, 
-                                                        token,
-                                                        token_key_padding_mask=token_mask,
-                                                        src_key_padding_mask_vid=vid_mask, 
-                                                        src_key_padding_mask_aud=aud_mask,
-                                                        pos_vid=pos_embed_vid,
-                                                        pos_aud=pos_embed_aud,
-                                                        video_length=video_length)  # (L, batch_size, d)
-        # print(src_vid.shape, src_aud.shape, token.shape) # (76,32,256) (76,32,256) (4,32,256)   => 1+75 : 1은 global token, 75는 local token
-        # print(src_txt.shape)    # (25,32,256) => 1+24 : 1은 global token, 24는 local token
-    
+        if experiment == 'umt':
+            # video, audio feature를 bottlenect encoder를 통해 연관성을 학습한다.
+            src_vid2, src_aud2, token = self.bottleneck_encoder(src_vid, 
+                                                            src_aud, 
+                                                            token,
+                                                            token_key_padding_mask=token_mask,
+                                                            src_key_padding_mask_vid=vid_mask, 
+                                                            src_key_padding_mask_aud=aud_mask,
+                                                            pos_vid=pos_embed_vid,
+                                                            pos_aud=pos_embed_aud,
+                                                            video_length=video_length)  # (L, batch_size, d)
+            # print(src_vid.shape, src_aud.shape, token.shape) # (76,32,256) (76,32,256) (4,32,256)   => 1+75 : 1은 global token, 75는 local token
+            # print(src_txt.shape)    # (25,32,256) => 1+24 : 1은 global token, 24는 local token
+            src_vid = (src_vid + src_vid2) / 2
+            src_aud = (src_aud + src_aud2) / 2
+        #elif experiment == 'joint':
+        
         # src_txt의 global feature를 가져온다.
         src_txt_global = src_txt[0].unsqueeze(0)  # (1, batch_size, d)
         src_txt_local = src_txt[1:]  # (L_txt-1, batch_size, d)
