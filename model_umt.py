@@ -208,10 +208,11 @@ class QDDETR(nn.Module):
         pos_vid_neg = pos_vid.clone()  # since it does not use actual content
         pos_aud_neg = pos_aud.clone()
         pos_txt_neg = pos_txt.clone()
-
+        src_vid_neg = src_vid.clone()
+        src_aud_neg = src_aud.clone()
         _, _, memory_neg, memory_global_neg = self.transformer(
-            src_vid,
-            src_aud,
+            src_vid_neg,
+            src_aud_neg,
             src_txt_neg,
             vid_mask = ~vid_mask,
             aud_mask = ~aud_mask,

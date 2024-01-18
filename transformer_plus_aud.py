@@ -71,8 +71,8 @@ class Transformer(nn.Module):
         t2v_encoder_layer = T2V_TransformerEncoderLayer(d_model, nhead, dim_feedforward,
                                                 dropout, activation, normalize_before)
         encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
-        self.t2v_encoder = TransformerEncoder(t2v_encoder_layer, num_encoder_layers, encoder_norm)
-
+        self.t2v_encoder1 = TransformerEncoder(t2v_encoder_layer, num_encoder_layers, encoder_norm)
+        self.t2v_encoder2 = TransformerEncoder(t2v_encoder_layer, num_encoder_layers, encoder_norm)
 
         # TransformerEncoderLayerThin
         encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward,
