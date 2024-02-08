@@ -334,7 +334,7 @@ def setup_model(opt):
     return model, criterion, optimizer, lr_scheduler
 
 
-def start_inference(train_opt=None, split=None, splitfile=None):
+def start_inference(train_opt=None, split=None, splitfile=None, q2_feat_dir=None):
     if train_opt is not None:
         opt = TestOptions().parse(train_opt.a_feat_dir)
     else:
@@ -364,6 +364,7 @@ def start_inference(train_opt=None, split=None, splitfile=None):
             data_path=opt.eval_path,
             v_feat_dirs=opt.v_feat_dirs,
             q_feat_dir=opt.t_feat_dir,
+            q2_feat_dir=opt.t2_feat_dir if opt.t2_feat_dir is not None else q2_feat_dir,
             q_feat_type="last_hidden_state",
             max_q_l=opt.max_q_l,
             max_v_l=opt.max_v_l,
@@ -385,6 +386,7 @@ def start_inference(train_opt=None, split=None, splitfile=None):
             data_path=opt.eval_path,
             v_feat_dirs=opt.v_feat_dirs,
             q_feat_dir=opt.t_feat_dir,
+            q2_feat_dir=opt.t2_feat_dir if opt.t2_feat_dir is not None else q2_feat_dir,
             a_feat_dir=opt.a_feat_dir,
             q_feat_type="last_hidden_state",
             max_q_l=opt.max_q_l,
@@ -419,6 +421,11 @@ def start_inference(train_opt=None, split=None, splitfile=None):
 
 from sys import argv
 if __name__ == '__main__':
-    _,_,_,_,split,_,splitfile = argv
-
-    start_inference(split=split, splitfile=splitfile)
+    print(argv)
+    split = argv[4] # val or test
+    splitfile = argv[6] # eval_path
+    q2_feat_dir = argv[8]   # q2_feat_dir
+    # print("split : ",split)
+    # print("splitfile : ",splitfile)
+    # print("q2_feat_dir : ",q2_feat_dir)
+    start_inference(split=split, splitfile=splitfile, q2_feat_dir=q2_feat_dir)

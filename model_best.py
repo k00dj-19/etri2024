@@ -92,7 +92,7 @@ class QDDETR(nn.Module):
         self.global_rep_token = torch.nn.Parameter(torch.randn(hidden_dim))
         self.global_rep_pos = torch.nn.Parameter(torch.randn(hidden_dim))
 
-    def forward(self, src_txt, src_txt_mask, src_vid, src_vid_mask, src_aud, src_aud_mask):
+    def forward(self, src_txt, src_txt_mask, src_vid, src_vid_mask, src_aud, src_aud_mask, src_txt_paraphrase, src_txt_paraphrase_mask):
         """The forward expects two tensors:
                - src_txt: [batch_size, L_txt, D_txt]
                - src_txt_mask: [batch_size, L_txt], containing 0 on padded pixels,
@@ -109,6 +109,9 @@ class QDDETR(nn.Module):
                - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
                                 dictionnaries containing the two above keys for each decoder layer.
         """
+        # print("src_txt.shape", src_txt.shape) # (32, 24, 256)
+        # print("src_txt_paraphrase.shape", src_txt_paraphrase.shape) # (32, 26, 256)
+        # print("src_txt_paraphrase_mask.shape", src_txt_paraphrase_mask.shape) # (32, 26)
         if src_aud is not None:
             #print(src_vid.shape, src_aud.shape) # (bsz, L_vid, d=2818), (bsz, L_aud, d=2050)
             #src_vid = torch.cat([src_vid, src_aud], dim=2)
@@ -116,6 +119,7 @@ class QDDETR(nn.Module):
             src_aud = self.input_aud_proj(src_aud)  # (bsz, L_aud, d) (32, 75, d=256)
             # print("src_aud :",src_aud.shape)    
         src_vid = self.input_vid_proj(src_vid)  # (bsz, L_vid, d) (32, 75, d=256)
+        src_txt = torch.cat([src_txt, src_txt_paraphrase], dim=1)  # (bsz, L_txt+L_txt_paraphrase, d)
         src_txt = self.input_txt_proj(src_txt)  # (bsz, L_txt, d) (32, 24ex, d=256)
         # print(src_vid.shape, src_txt.shape) # (bsz, L_vid, d=2818), (bsz, L_txt, d=2818)
             
@@ -124,8 +128,8 @@ class QDDETR(nn.Module):
         src_a = torch.cat([src_aud, src_txt], dim=1) if src_aud is not None else src
         #print("src_a :",src_a.shape) # (bsz, L_vid+L_txt, d)
         #print(src_vid_mask, src_txt_mask.shape, src_aud_mask.shape) # (bsz, L_vid), (bsz, L_txt), (bsz, L_aud)
-        mask = torch.cat([src_vid_mask, src_txt_mask], dim=1).bool()  # (bsz, L_vid+L_txt)
-        mask_a = torch.cat([src_aud_mask, src_txt_mask], dim=1).bool() if src_aud is not None else mask
+        mask = torch.cat([src_vid_mask, src_txt_mask, src_txt_paraphrase_mask], dim=1).bool()  # (bsz, L_vid+L_txt)
+        mask_a = torch.cat([src_aud_mask, src_txt_mask, src_txt_paraphrase_mask], dim=1).bool() if src_aud is not None else mask
         # TODO should we remove or use different positional embeddings to the src_txt?
         pos_vid = self.position_embed(src_vid, src_vid_mask)  # (bsz, L_vid, d)
         pos_aud = self.position_embed(src_aud, src_aud_mask) if src_aud is not None else pos_vid
@@ -184,6 +188,7 @@ class QDDETR(nn.Module):
 
         ### Neg Pairs ###
         src_txt_neg = torch.cat([src_txt[1:], src_txt[0:1]], dim=0)
+        src_txt_mask = torch.cat([src_txt_mask, src_txt_paraphrase_mask], dim=1).bool()
         src_txt_mask_neg = torch.cat([src_txt_mask[1:], src_txt_mask[0:1]], dim=0)
 
         src_neg = torch.cat([src_vid, src_txt_neg], dim=1)

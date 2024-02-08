@@ -77,6 +77,7 @@ class BaseOptions(object):
                             help="video feature dirs. If more than one, will concat their features. "
                                  "Note that sub ctx features are also accepted here.")
         parser.add_argument("--t_feat_dir", type=str, help="text/query feature dir")
+        parser.add_argument("--t2_feat_dir", type=str, help="text/query feature dir for paraphrase")
         parser.add_argument("--a_feat_dir", type=str, help="audio feature dir")
         parser.add_argument("--v_feat_dim", type=int, help="video feature dim")
         parser.add_argument("--t_feat_dim", type=int, help="text/query feature dim")
@@ -235,4 +236,6 @@ class TestOptions(BaseOptions):
                                  help="dir to save results, if not set, fall back to training results_dir")
         self.parser.add_argument("--model_dir", type=str,
                                  help="dir contains the model file, will be converted to absolute path afterwards")
+        #"--t2_feat_dir", type=str, help="text/query feature dir for paraphrase")
+        
 

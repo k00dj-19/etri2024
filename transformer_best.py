@@ -72,7 +72,7 @@ class Transformer(nn.Module):
                                                 dropout, activation, normalize_before)
         encoder_norm = nn.LayerNorm(d_model) if normalize_before else None
         self.t2v_encoder = TransformerEncoder(t2v_encoder_layer, num_encoder_layers, encoder_norm)
-
+        self.t2v_encoder2 = TransformerEncoder(t2v_encoder_layer, num_encoder_layers, encoder_norm)
 
         # TransformerEncoderLayerThin
         encoder_layer = TransformerEncoderLayer(d_model, nhead, dim_feedforward,
@@ -104,7 +104,7 @@ class Transformer(nn.Module):
                 nn.init.xavier_uniform_(p)
 
     # for tvsum, add video_length in argument
-    def forward(self, src, mask, query_embed, pos_embed, video_length=None):
+    def forward(self, src, src_a, mask, mask_a, query_embed, pos_embed, pos_embed_a, video_length=None):
         """
         Args:
             src: (batch_size, L, d)
@@ -127,14 +127,31 @@ class Transformer(nn.Module):
         src = src[:video_length + 1]    # (L, batch_size, d) 76,32,256
         mask = mask[:, :video_length + 1]   # (batch_size, L) 32,76 -> False, True 있음 -> True면 연산에 포함되지 않도록함
         pos_embed = pos_embed[:video_length + 1]    # (L, batch_size, d) 76,32,256
-        # print('src : ', src.shape)  
-        # print('mask : ', mask.shape)
-        # print('pos_embed : ', pos_embed.shape)
-        #print(mask)
-        #true_count = torch.sum(mask).item()
-        #print(true_count)
+
+        if src_a is not None:
+            src_a = src_a.permute(1, 0, 2)  # (L, batch_size, d)
+            pos_embed_a = pos_embed_a.permute(1, 0, 2)  # (L, batch_size, d)
+            src_a = self.t2v_encoder2(src_a, src_key_padding_mask=mask_a, pos=pos_embed_a, video_length=video_length)  # (L, batch_size, d)
+            src_a = src_a[:video_length + 1]    # (L, batch_size, d) 76,32,256
+            mask_a = mask_a[:, :video_length + 1]   # (batch_size, L) 32,76 -> False, True 있음 -> True면 연산에 포함되지 않도록함
+            pos_embed_a = pos_embed_a[:video_length + 1]    # (L, batch_size, d) 76,32,256
+
+            # src_a 와  src를 합치거나 concat하는 부분
+            src = (src + src_a) / 2
+            #print('src shape : ', src.shape)
+            # src = torch.cat((src, src_a), dim=0)    # (L_vid+L_aud, batch_size, d)
+            # mask = torch.cat((mask, mask_a), dim=1) # (batch_size, L_vid+L_aud)
+            # pos_embed = torch.cat((pos_embed, pos_embed_a), dim=0)    # (L_vid+L_aud, batch_size, d)
+
         memory = self.encoder(src, src_key_padding_mask=mask, pos=pos_embed)  # (L, batch_size, d)
+        # if src_a is not None:
+        #     memory_a = self.encoder(src_a, src_key_padding_mask=mask_a, pos=pos_embed_a)  # (L, batch_size, d)
+        #     memory = (memory + memory_a) / 2
+        # print("src shape : ", src.shape)
+        # print("memory shape : ", memory.shape)
         memory_global, memory_local = memory[0], memory[1:]
+        # print("memory_global shape : ", memory_global.shape)
+        # print("memory_local shape : ", memory_local.shape)
         mask_local = mask[:, 1:]
         pos_embed_local = pos_embed[1:]
 
