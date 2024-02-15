@@ -14,6 +14,7 @@ from qd_detr.config import TestOptions
 from qd_detr.model import build_model
 from qd_detr.span_utils import span_cxw_to_xx
 from qd_detr.start_end_dataset import StartEndDataset, start_end_collate, prepare_batch_inputs
+#from qd_detr.start_end_dataset_audio_random import \
 from qd_detr.start_end_dataset_audio import \
     StartEndDataset_audio, start_end_collate_audio, prepare_batch_inputs_audio
 from qd_detr.postprocessing_qd_detr import PostProcessorDETR

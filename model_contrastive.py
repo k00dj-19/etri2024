@@ -445,7 +445,7 @@ class SetCriterion(nn.Module):
         loss_nce_t = - pos_term_t / num_pos_t + neg_term_t  # (bsz, )
         loss_v = loss_nce_v.mean()
         loss_t = loss_nce_t.mean()
-        loss = (loss_v + loss_t) 
+        loss = (loss_v + loss_t) / 2
         losses = {"loss_contrastive_align_vid_txt": loss}
         #print('loss_v', loss_v, 'loss_t', loss_t, 'loss', loss)
         return losses

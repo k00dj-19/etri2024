@@ -16,6 +16,7 @@ from torch.utils.tensorboard import SummaryWriter
 from qd_detr.config import BaseOptions
 from qd_detr.start_end_dataset import \
     StartEndDataset, start_end_collate, prepare_batch_inputs
+#from qd_detr.start_end_dataset_audio_random import \
 from qd_detr.start_end_dataset_audio import \
     StartEndDataset_audio, start_end_collate_audio, prepare_batch_inputs_audio
 from qd_detr.inference import eval_epoch, start_inference, setup_model
@@ -45,6 +46,7 @@ def train_epoch(model, criterion, train_loader, optimizer, opt, epoch_i, tb_writ
 
     # init meters
     time_meters = defaultdict(AverageMeter)
+    
     loss_meters = defaultdict(AverageMeter)
 
     num_training_examples = len(train_loader)
@@ -62,6 +64,7 @@ def train_epoch(model, criterion, train_loader, optimizer, opt, epoch_i, tb_writ
         time_meters["prepare_inputs_time"].update(time.time() - timer_start)
         timer_start = time.time()
         outputs = model(**model_inputs)
+        #print("outputs: ", outputs.keys())
         loss_dict = criterion(outputs, targets)
         weight_dict = criterion.weight_dict
         losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
@@ -142,7 +145,7 @@ def train(model, criterion, optimizer, lr_scheduler, train_dataset, val_dataset,
         if epoch_i > -1:
             train_epoch(model, criterion, train_loader, optimizer, opt, epoch_i, tb_writer)
             lr_scheduler.step()
-        eval_epoch_interval = 5
+        eval_epoch_interval = 1
         if opt.eval_path is not None and (epoch_i + 1) % eval_epoch_interval == 0:
             with torch.no_grad():
                 metrics_no_nms, metrics_nms, eval_loss_meters, latest_file_paths = \
