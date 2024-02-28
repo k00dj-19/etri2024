@@ -113,10 +113,12 @@ class QDDETR(nn.Module):
             src_vid = torch.cat([src_vid, src_aud], dim=2)
             
         src_vid = self.input_vid_proj(src_vid)
-        src_txt = torch.cat([src_txt, src_txt_paraphrase, src_txt_paraphrase2, src_txt_paraphrase3], dim=1)  # (bsz, L_txt+L_txt_paraphrase, d)
+        #src_txt = torch.cat([src_txt, src_txt_paraphrase, src_txt_paraphrase2, src_txt_paraphrase3], dim=1)  # (bsz, L_txt+L_txt_paraphrase, d)
+        src_txt = torch.cat([src_txt, src_txt_paraphrase, src_txt_paraphrase2], dim=1)
         src_txt = self.input_txt_proj(src_txt)
         src = torch.cat([src_vid, src_txt], dim=1)  # (bsz, L_vid+L_txt, d)
-        mask = torch.cat([src_vid_mask, src_txt_mask, src_txt_paraphrase_mask, src_txt_paraphrase2_mask, src_txt_paraphrase3_mask], dim=1).bool()  # (bsz, L_vid+L_txt)
+        #mask = torch.cat([src_vid_mask, src_txt_mask, src_txt_paraphrase_mask, src_txt_paraphrase2_mask, src_txt_paraphrase3_mask], dim=1).bool()  # (bsz, L_vid+L_txt)
+        mask = torch.cat([src_vid_mask, src_txt_mask, src_txt_paraphrase_mask, src_txt_paraphrase2_mask], dim=1).bool()
         # TODO should we remove or use different positional embeddings to the src_txt?
         pos_vid = self.position_embed(src_vid, src_vid_mask)  # (bsz, L_vid, d)
         pos_txt = self.txt_position_embed(src_txt) if self.use_txt_pos else torch.zeros_like(src_txt)  # (bsz, L_txt, d)
@@ -167,7 +169,8 @@ class QDDETR(nn.Module):
         ### Neg Pairs ###
 
         src_txt_neg = torch.cat([src_txt[1:], src_txt[0:1]], dim=0)
-        src_txt_mask = torch.cat([src_txt_mask, src_txt_paraphrase_mask, src_txt_paraphrase2_mask, src_txt_paraphrase3_mask], dim=1).bool()
+        #src_txt_mask = torch.cat([src_txt_mask, src_txt_paraphrase_mask, src_txt_paraphrase2_mask, src_txt_paraphrase3_mask], dim=1).bool()
+        src_txt_mask = torch.cat([src_txt_mask, src_txt_paraphrase_mask, src_txt_paraphrase2_mask], dim=1).bool()
         src_txt_mask_neg = torch.cat([src_txt_mask[1:], src_txt_mask[0:1]], dim=0)
 
         src_neg = torch.cat([src_vid, src_txt_neg], dim=1)

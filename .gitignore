@@ -1,6 +1,6 @@
 results/
-run_on_video/
+
 standalone_eval/
 utils/
-scripts/
+
 __pycache__

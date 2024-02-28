@@ -1,0 +1,19 @@
+bash qd_detr/scripts/train.sh --seed 2018
+bash qd_detr/scripts/train_audio.sh --seed 2018
+bash qd_detr/scripts/train_audio_paraphrase.sh --seed 2018
+
+bash qd_detr/scripts/inference.sh results/{direc}/model_best.ckpt 'val'
+bash qd_detr/scripts/inference.sh results/{direc}/model_best.ckpt 'test'
+
+bash qd_detr/scripts/pretrain.sh 
+bash qd_detr/scripts/train.sh  --resume ${PRETRAIN_CHECKPOINT_PATH}
+
+
+bash qd_detr/scripts/tvsum/train_tvsum.sh 
+bash qd_detr/scripts/tvsum/train_tvsum_audio.sh 
+
+-------------------------------------
+
+bash qd_detr/scripts/inference.sh results/hl-video_tef-exp-2024_01_16_15_37_03/model_best.ckpt 'val'
+
+bash qd_detr/scripts/inference_audio.sh results/audio_checkpoint/model_best.ckpt 'val'
