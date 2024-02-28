@@ -25,7 +25,7 @@ class StartEndDataset_audio(Dataset):
     }
     """
 
-    def __init__(self, dset_name, data_path, v_feat_dirs, q_feat_dir, q2_feat_dir=None, a_feat_dir=None,
+    def __init__(self, dset_name, data_path, v_feat_dirs, q_feat_dir, q2_feat_dir=None, q3_feat_dir=None, q4_feat_dir=None, a_feat_dir=None,
                  q_feat_type="last_hidden_state",
                  max_q_l=75, max_v_l=75, data_ratio=1.0, ctx_mode="video",
                  normalize_v=True, normalize_t=True, load_labels=True,
@@ -38,6 +38,8 @@ class StartEndDataset_audio(Dataset):
             if isinstance(v_feat_dirs, list) else [v_feat_dirs]
         self.q_feat_dir = q_feat_dir
         self.q2_feat_dir = q2_feat_dir
+        self.q3_feat_dir = q3_feat_dir
+        self.q4_feat_dir = q4_feat_dir
         self.a_feat_dir = a_feat_dir
 
         self.q_feat_type = q_feat_type
@@ -92,7 +94,11 @@ class StartEndDataset_audio(Dataset):
         model_inputs = dict()
         model_inputs["query_feat"] = self._get_query_feat_by_qid(meta["qid"])  # (Dq, ) or (Lq, Dq)
         if self.q2_feat_dir is not None:
-            model_inputs["query2_feat"] = self._get_query2_feat_by_qid(meta["qid"])  # (Dq, ) or (Lq, Dq)
+            model_inputs["query2_feat"] = self._get_paraphrase_feat_by_qid(meta["qid"], num=1)  # (Dq, ) or (Lq, Dq)
+        if self.q3_feat_dir is not None:
+            model_inputs["query3_feat"] = self._get_paraphrase_feat_by_qid(meta["qid"], num=2)
+        if self.q4_feat_dir is not None:
+            model_inputs["query4_feat"] = self._get_paraphrase_feat_by_qid(meta["qid"], num=3)
         if self.use_video:
             model_inputs["video_feat"] = self._get_video_feat_by_vid(meta["vid"])  # (Lv, Dv)
             ctx_l = len(model_inputs["video_feat"])
@@ -127,7 +133,13 @@ class StartEndDataset_audio(Dataset):
         
         if self.q2_feat_dir is not None and len(model_inputs["query2_feat"].shape) == 3:
             model_inputs["query2_feat"] = model_inputs["query2_feat"][0]
-            
+        
+        if self.q3_feat_dir is not None and len(model_inputs["query3_feat"].shape) == 3:
+            model_inputs["query3_feat"] = model_inputs["query3_feat"][0]
+        
+        if self.q4_feat_dir is not None and len(model_inputs["query4_feat"].shape) == 3:
+            model_inputs["query4_feat"] = model_inputs["query4_feat"][0]
+
         if self.load_labels:
             if self.dset_name == 'tvsum':
                 model_inputs["span_labels"] = torch.tensor([[0., 0.]])
@@ -313,24 +325,31 @@ class StartEndDataset_audio(Dataset):
             
         return torch.from_numpy(q_feat)  # (D, ) or (Lq, D)
 
-    def _get_query2_feat_by_qid(self, qid):
+    def _get_paraphrase_feat_by_qid(self, qid, num):
         if self.dset_name == 'tvsum':
             q_feat2 = np.load(join(self.q_feat2_dir, "{}.npz".format(qid)))
             return torch.from_numpy(q_feat2['token'])
         else:
             # QVhighlight dataset
-            q2_feat_path = join(self.q2_feat_dir, f"qid{qid}.npz")
-            q2_feat = np.load(q2_feat_path)['arr_0'].astype(np.float32)
+            if num == 1:
+                q_feat_path = join(self.q2_feat_dir, f"qid{qid}.npz")
+                q_feat = np.load(q_feat_path)['arr_0'].astype(np.float32)
+            elif num == 2:
+                q_feat_path = join(self.q3_feat_dir, f"qid{qid}.npz")
+                q_feat = np.load(q_feat_path)['arr_0'].astype(np.float32)
+            elif num == 3:
+                q_feat_path = join(self.q4_feat_dir, f"qid{qid}.npz")
+                q_feat = np.load(q_feat_path)['arr_0'].astype(np.float32)
             #print("qid:", qid, q2_feat.shape, q2_feat.dtype)
             if self.q_feat_type == "last_hidden_state":
-                q2_feat = q2_feat[:self.max_q_l]
-            #print("qid:", qid, q2_feat.shape, q2_feat.dtype)
+                q_feat = q_feat[:self.max_q_l]
+            #print("qid:", qid, q_feat.shape, q_feat.dtype)
             if self.normalize_t:
-                q2_feat = l2_normalize_np_array(q2_feat)
+                q_feat = l2_normalize_np_array(q_feat)
             if self.txt_drop_ratio > 0:
-                q2_feat = self.random_drop_rows(q2_feat)
+                q_feat = self.random_drop_rows(q_feat)
             
-        return torch.from_numpy(q2_feat)  # (D, ) or (Lq, D)
+        return torch.from_numpy(q_feat)  # (D, ) or (Lq, D)
     
     def random_drop_rows(self, embeddings):
         """randomly mask num_drop rows in embeddings to be zero.
@@ -422,6 +441,10 @@ def prepare_batch_inputs_audio(batched_model_inputs, device, non_blocking=False)
         src_aud_mask=batched_model_inputs["audio_feat"][1].to(device, non_blocking=non_blocking),
         src_txt_paraphrase=batched_model_inputs["query2_feat"][0].to(device, non_blocking=non_blocking) if "query2_feat" in batched_model_inputs else None,
         src_txt_paraphrase_mask=batched_model_inputs["query2_feat"][1].to(device, non_blocking=non_blocking) if "query2_feat" in batched_model_inputs else None,
+        src_txt_paraphrase2=batched_model_inputs["query3_feat"][0].to(device, non_blocking=non_blocking) if "query3_feat" in batched_model_inputs else None,
+        src_txt_paraphrase2_mask=batched_model_inputs["query3_feat"][1].to(device, non_blocking=non_blocking) if "query3_feat" in batched_model_inputs else None,
+        src_txt_paraphrase3=batched_model_inputs["query4_feat"][0].to(device, non_blocking=non_blocking) if "query4_feat" in batched_model_inputs else None,
+        src_txt_paraphrase3_mask=batched_model_inputs["query4_feat"][1].to(device, non_blocking=non_blocking) if "query4_feat" in batched_model_inputs else None,
     )
 
     targets = {}

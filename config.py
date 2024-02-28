@@ -77,7 +77,9 @@ class BaseOptions(object):
                             help="video feature dirs. If more than one, will concat their features. "
                                  "Note that sub ctx features are also accepted here.")
         parser.add_argument("--t_feat_dir", type=str, help="text/query feature dir")
-        parser.add_argument("--t2_feat_dir", type=str, help="text/query feature dir for paraphrase")
+        parser.add_argument("--t2_feat_dir", type=str, help="text/query feature dir for paraphrase1")
+        parser.add_argument("--t3_feat_dir", type=str, help="text/query feature dir for paraphrase2")
+        parser.add_argument("--t4_feat_dir", type=str, help="text/query feature dir for paraphrase3")
         parser.add_argument("--a_feat_dir", type=str, help="audio feature dir")
         parser.add_argument("--v_feat_dim", type=int, help="video feature dim")
         parser.add_argument("--t_feat_dim", type=int, help="text/query feature dim")
@@ -148,6 +150,9 @@ class BaseOptions(object):
                                  "(or non-minimum suppression for distance)"
                                  "to post-processing the predictions. "
                                  "-1: do not use nms. [0, 1]")
+        parser.add_argument("--pre_contrastive_loss", action="store_true",
+                            help="Available pre_contrastive_loss between src_video token and the text token.")
+        parser.add_argument("--pre_contrastive_loss_coef", default=0.1, type=float)
         self.parser = parser
 
     def display_save(self, opt):

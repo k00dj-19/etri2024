@@ -92,7 +92,7 @@ class QDDETR(nn.Module):
         self.global_rep_token = torch.nn.Parameter(torch.randn(hidden_dim))
         self.global_rep_pos = torch.nn.Parameter(torch.randn(hidden_dim))
 
-    def forward(self, src_txt, src_txt_mask, src_vid, src_vid_mask, src_aud, src_aud_mask, src_txt_paraphrase, src_txt_paraphrase_mask):
+    def forward(self, src_txt, src_txt_mask, src_vid, src_vid_mask, src_aud, src_aud_mask, src_txt_paraphrase, src_txt_paraphrase_mask, src_txt_paraphrase2, src_txt_paraphrase2_mask, src_txt_paraphrase3, src_txt_paraphrase3_mask):
         """The forward expects two tensors:
                - src_txt: [batch_size, L_txt, D_txt]
                - src_txt_mask: [batch_size, L_txt], containing 0 on padded pixels,
@@ -113,10 +113,10 @@ class QDDETR(nn.Module):
             src_vid = torch.cat([src_vid, src_aud], dim=2)
             
         src_vid = self.input_vid_proj(src_vid)
-        src_txt = torch.cat([src_txt, src_txt_paraphrase], dim=1)  # (bsz, L_txt+L_txt_paraphrase, d)
+        src_txt = torch.cat([src_txt, src_txt_paraphrase, src_txt_paraphrase2, src_txt_paraphrase3], dim=1)  # (bsz, L_txt+L_txt_paraphrase, d)
         src_txt = self.input_txt_proj(src_txt)
         src = torch.cat([src_vid, src_txt], dim=1)  # (bsz, L_vid+L_txt, d)
-        mask = torch.cat([src_vid_mask, src_txt_mask, src_txt_paraphrase_mask], dim=1).bool()  # (bsz, L_vid+L_txt)
+        mask = torch.cat([src_vid_mask, src_txt_mask, src_txt_paraphrase_mask, src_txt_paraphrase2_mask, src_txt_paraphrase3_mask], dim=1).bool()  # (bsz, L_vid+L_txt)
         # TODO should we remove or use different positional embeddings to the src_txt?
         pos_vid = self.position_embed(src_vid, src_vid_mask)  # (bsz, L_vid, d)
         pos_txt = self.txt_position_embed(src_txt) if self.use_txt_pos else torch.zeros_like(src_txt)  # (bsz, L_txt, d)
@@ -147,10 +147,8 @@ class QDDETR(nn.Module):
 
         txt_mem = memory[:, src_vid.shape[1]:]  # (bsz, L_txt, d)
         vid_mem = memory[:, :src_vid.shape[1]]  # (bsz, L_vid, d)
-        #print("txt_mem:", txt_mem.shape, "vid_mem:", vid_mem.shape)\
-        #print(self.contrastive_align_loss)
+        #print("txt_mem:", txt_mem.shape, "vid_mem:", vid_mem.shape)
         if self.contrastive_align_loss:
-            #print("contrastive_align_loss")
             proj_queries = F.normalize(self.contrastive_align_projection_query(hs), p=2, dim=-1)
             proj_txt_mem = F.normalize(self.contrastive_align_projection_txt(txt_mem), p=2, dim=-1)
             proj_vid_mem = F.normalize(self.contrastive_align_projection_vid(vid_mem), p=2, dim=-1)
@@ -159,16 +157,8 @@ class QDDETR(nn.Module):
                 proj_txt_mem=proj_txt_mem,
                 proj_vid_mem=proj_vid_mem
             ))
-            #print('proj_queries:', proj_queries.shape, 'proj_txt_mem:', proj_txt_mem.shape, 'proj_vid_mem:', proj_vid_mem.shape)
-        contrastive_vid_txt_loss = True
-        if contrastive_vid_txt_loss:
-            src_txt = F.normalize(src_txt, p=2, dim=-1)
-            src_vid = F.normalize(src_vid, p=2, dim=-1)
-            out.update(dict(
-                src_txt=src_txt,
-                src_vid=src_vid
-            ))
-            #print("src_txt:", src_txt.shape, "src_vid:", src_vid.shape)
+            
+            
         # !!! this is code for test
         if src_txt.shape[1] == 0:
             print("There is zero text query. You should change codes properly")
@@ -177,7 +167,7 @@ class QDDETR(nn.Module):
         ### Neg Pairs ###
 
         src_txt_neg = torch.cat([src_txt[1:], src_txt[0:1]], dim=0)
-        src_txt_mask = torch.cat([src_txt_mask, src_txt_paraphrase_mask], dim=1).bool()
+        src_txt_mask = torch.cat([src_txt_mask, src_txt_paraphrase_mask, src_txt_paraphrase2_mask, src_txt_paraphrase3_mask], dim=1).bool()
         src_txt_mask_neg = torch.cat([src_txt_mask[1:], src_txt_mask[0:1]], dim=0)
 
         src_neg = torch.cat([src_vid, src_txt_neg], dim=1)
@@ -205,11 +195,6 @@ class QDDETR(nn.Module):
                 assert proj_queries is not None
                 for idx, d in enumerate(proj_queries[:-1]):
                     out['aux_outputs'][idx].update(dict(proj_queries=d, proj_txt_mem=proj_txt_mem))
-            if contrastive_vid_txt_loss:
-                assert src_txt is not None
-                out['aux_outputs'][0].update(dict(src_txt=src_txt, src_vid=src_vid))
-        #print("out['aux_outputs']:", len(out['aux_outputs']))
-        #print("out:", out.keys())
         return out
 
     # @torch.jit.unused
@@ -405,49 +390,25 @@ class SetCriterion(nn.Module):
         losses = {"loss_contrastive_align": loss_nce.mean()}
         return losses
 
-    def loss_contrastive_align_vid_txt(self, outputs, targets, indices, log=True, temperature=0.07):
-
-        """
-        Calculate the contrastive loss between text and image embeddings
-
-        Parameters:
-        - normalized_text_embed: Tensor of shape (batch, #tokens, d)
-        - normalized_img_embed: Tensor of shape (batch, #queries, d)
-        - temperature: Temperature parameter for scaling similarities
-
-        Returns:
-        - loss: Calculated contrastive loss
-        """
-        # Calculate similarities
-        # Shape: (batch, #tokens, #queries)
-        normalized_text_embed = outputs["src_txt"]  # (bsz, #text, d)  text tokens
-        normalized_img_embed = outputs["src_vid"]  # (bsz, #video, d)
-
-        #print(normalized_text_embed.shape, normalized_img_embed.shape)
+    def loss_contrastive_align_vid_txt(self, outputs, targets, indices, log=True):
+        """encourage higher scores between matched query span and input text"""
+        # TODO (1)  align vid_mem and txt_mem;
+        # TODO (2) change L1 loss as CE loss on 75 labels, similar to soft token prediction in MDETR
+        normalized_text_embed = outputs["proj_txt_mem"]  # (bsz, #tokens, d)  text tokens
+        normalized_img_embed = outputs["proj_queries"]  # (bsz, #queries, d)
         logits = torch.einsum(
-            "bmd,bnd->bmn", normalized_img_embed, normalized_text_embed)  # (bsz, #video, #text)
-        logits_v = logits.sum(2) / self.temperature  # (bsz, #video)
-        logits_t = logits.sum(1) / self.temperature  # (bsz, #text)
+            "bmd,bnd->bmn", normalized_img_embed, normalized_text_embed)  # (bsz, #queries, #tokens)
+        logits = logits.sum(2) / self.temperature  # (bsz, #queries)
         idx = self._get_src_permutation_idx(indices)
-        positive_map_v = torch.zeros_like(logits_v, dtype=torch.bool)
-        positive_map_t = torch.zeros_like(logits_t, dtype=torch.bool)
-        positive_map_v[idx] = True
-        positive_map_t[idx] = True
-        positive_logits_v = logits_v.masked_fill(~positive_map_v, 0)
-        positive_logits_t = logits_t.masked_fill(~positive_map_t, 0)
-        pos_term_v = positive_logits_v.sum(1)  # (bsz, )
-        pos_term_t = positive_logits_t.sum(1)  # (bsz, )
-        num_pos_v = positive_map_v.sum(1)  # (bsz, )
-        num_pos_t = positive_map_t.sum(1)  # (bsz, )
-        neg_term_v = logits_v.logsumexp(1)  # (bsz, )
-        neg_term_t = logits_t.logsumexp(1)  # (bsz, )
-        loss_nce_v = - pos_term_v / num_pos_v + neg_term_v  # (bsz, )
-        loss_nce_t = - pos_term_t / num_pos_t + neg_term_t  # (bsz, )
-        loss_v = loss_nce_v.mean()
-        loss_t = loss_nce_t.mean()
-        loss = (loss_v + loss_t) 
-        losses = {"loss_contrastive_align_vid_txt": loss}
-        #print('loss_v', loss_v, 'loss_t', loss_t, 'loss', loss)
+        positive_map = torch.zeros_like(logits, dtype=torch.bool)
+        positive_map[idx] = True
+        positive_logits = logits.masked_fill(~positive_map, 0)
+
+        pos_term = positive_logits.sum(1)  # (bsz, )
+        num_pos = positive_map.sum(1)  # (bsz, )
+        neg_term = logits.logsumexp(1)  # (bsz, )
+        loss_nce = - pos_term / num_pos + neg_term  # (bsz, )
+        losses = {"loss_contrastive_align": loss_nce.mean()}
         return losses
 
     def _get_src_permutation_idx(self, indices):
@@ -468,7 +429,6 @@ class SetCriterion(nn.Module):
             "labels": self.loss_labels,
             "contrastive_align": self.loss_contrastive_align,
             "saliency": self.loss_saliency,
-            "contrastive_align_vid_txt": self.loss_contrastive_align_vid_txt,
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, **kwargs)
@@ -517,7 +477,6 @@ class SetCriterion(nn.Module):
                     l_dict = self.get_loss(loss, aux_outputs, targets, indices, **kwargs)
                     l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
                     losses.update(l_dict)
-        #print(losses)
         return losses
 
 
@@ -616,7 +575,6 @@ def build_model(args):
                    "loss_saliency": args.lw_saliency}
     if args.contrastive_align_loss:
         weight_dict["loss_contrastive_align"] = args.contrastive_align_loss_coef
-        weight_dict["loss_contrastive_align_vid_txt"] = 0.0 #args.contrastive_align_loss_coef
     # TODO this is a hack
     if args.aux_loss:
         aux_weight_dict = {}
@@ -627,7 +585,7 @@ def build_model(args):
     losses = ['spans', 'labels', 'saliency']
     if args.contrastive_align_loss:
         losses += ["contrastive_align"]
-        losses += ["contrastive_align_vid_txt"]
+        
     # For tvsum dataset
     use_matcher = not (args.dset_name == 'tvsum')
         

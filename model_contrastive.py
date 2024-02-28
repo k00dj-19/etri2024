@@ -25,7 +25,7 @@ class QDDETR(nn.Module):
     def __init__(self, transformer, position_embed, txt_position_embed, txt_dim, vid_dim,
                  num_queries, input_dropout, aux_loss=False,
                  contrastive_align_loss=False, contrastive_hdim=64,
-                 max_v_l=75, span_loss_type="l1", use_txt_pos=False, n_input_proj=2, aud_dim=0):
+                 max_v_l=75, span_loss_type="l1", use_txt_pos=False, n_input_proj=2, aud_dim=0, pre_contrastive_loss=False):
         """ Initializes the model.
         Parameters:
             transformer: torch module of the transformer architecture. See transformer.py
@@ -86,12 +86,14 @@ class QDDETR(nn.Module):
 
         self.saliency_proj1 = nn.Linear(hidden_dim, hidden_dim)
         self.saliency_proj2 = nn.Linear(hidden_dim, hidden_dim)
+        self.contrastive_proj1 = nn.Linear(hidden_dim, hidden_dim)
+        self.contrastive_proj2 = nn.Linear(hidden_dim, hidden_dim)
         self.aux_loss = aux_loss
 
         self.hidden_dim = hidden_dim
         self.global_rep_token = torch.nn.Parameter(torch.randn(hidden_dim))
         self.global_rep_pos = torch.nn.Parameter(torch.randn(hidden_dim))
-
+        self.pre_contrastive_loss = pre_contrastive_loss
     def forward(self, src_txt, src_txt_mask, src_vid, src_vid_mask, src_aud, src_aud_mask, src_txt_paraphrase, src_txt_paraphrase_mask):
         """The forward expects two tensors:
                - src_txt: [batch_size, L_txt, D_txt]
@@ -160,13 +162,15 @@ class QDDETR(nn.Module):
                 proj_vid_mem=proj_vid_mem
             ))
             #print('proj_queries:', proj_queries.shape, 'proj_txt_mem:', proj_txt_mem.shape, 'proj_vid_mem:', proj_vid_mem.shape)
-        contrastive_vid_txt_loss = True
-        if contrastive_vid_txt_loss:
-            src_txt = F.normalize(src_txt, p=2, dim=-1)
-            src_vid = F.normalize(src_vid, p=2, dim=-1)
+        #print("pre_contrastive_loss:", self.pre_contrastive_loss)
+        if self.pre_contrastive_loss:
+            #self.contrastive_proj1
+            #self.contrastive_proj2
+            normalized_src_txt = F.normalize(self.contrastive_proj1(src_txt), p=2, dim=-1)
+            normalized_src_vid = F.normalize(self.contrastive_proj2(src_vid), p=2, dim=-1)
             out.update(dict(
-                src_txt=src_txt,
-                src_vid=src_vid
+                src_txt=normalized_src_txt,
+                src_vid=normalized_src_vid
             ))
             #print("src_txt:", src_txt.shape, "src_vid:", src_vid.shape)
         # !!! this is code for test
@@ -174,10 +178,46 @@ class QDDETR(nn.Module):
             print("There is zero text query. You should change codes properly")
             exit(-1)
 
-        ### Neg Pairs ###
 
+        # First method: Compute similarity for all tokens, then pool
+
+        # Calculate similarity
+        B, V, L = src_vid.shape[0], src_vid.shape[1], src_txt.shape[1]
+
+        # src_txt: (bsz, L_txt, d), src_vid: (bsz, L_vid, d)
+        # src_txt: (bsz * L_txt, d), src_vid: (bsz * L_vid, d)
+        src_txt_transformed = src_txt.view(-1, src_txt.shape[-1])
+        src_vid_transformed = src_vid.view(-1, src_vid.shape[-1])
+
+        similarity_matrix = torch.einsum('td,vd->tv', src_txt_transformed, src_vid_transformed) # (bsz * L_txt, bsz * L_vid)
+        # similarity: (bsz * L_txt, bsz * L_vid) -> (bsz, L_txt, L_vid, bsz)
+        similarity_matrix = similarity_matrix.view(B, L, B, V).permute(0, 2, 1, 3)
+      
+        sim_matrix_1 = similarity_matrix.mean(dim=-1).mean(dim=-1)
+        # print("similarity_matrix:", sim_matrix_1.shape)
+        # print(sim_matrix_1.diag())
+
+        # Second method: Pool first, then compute similarity
+        # Pooling
+        pooled_txt = src_txt.mean(dim=1)  # Pooling over the text length dimension
+        pooled_vid = src_vid.mean(dim=1)  # Pooling over the video length dimension
+        # Calculate similarity
+        sim_matrix_2 = torch.matmul(pooled_txt, pooled_vid.T)
+
+        # print("sim_matrix_2:", sim_matrix_2.shape)
+        # print(sim_matrix_2.diag())
+
+
+        ### Neg Pairs ###
+        sim_matrix_1.fill_diagonal_(-float('inf'))
+
+        # 각 행에서 최대값을 가지는 열의 인덱스 찾기
+        negative_indices = sim_matrix_1.argmax(dim=1)
+       
+        #src_txt_neg = src_txt[negative_indices]
         src_txt_neg = torch.cat([src_txt[1:], src_txt[0:1]], dim=0)
         src_txt_mask = torch.cat([src_txt_mask, src_txt_paraphrase_mask], dim=1).bool()
+        #src_txt_mask_neg = src_txt_mask[negative_indices]
         src_txt_mask_neg = torch.cat([src_txt_mask[1:], src_txt_mask[0:1]], dim=0)
 
         src_neg = torch.cat([src_vid, src_txt_neg], dim=1)
@@ -205,9 +245,9 @@ class QDDETR(nn.Module):
                 assert proj_queries is not None
                 for idx, d in enumerate(proj_queries[:-1]):
                     out['aux_outputs'][idx].update(dict(proj_queries=d, proj_txt_mem=proj_txt_mem))
-            if contrastive_vid_txt_loss:
-                assert src_txt is not None
-                out['aux_outputs'][0].update(dict(src_txt=src_txt, src_vid=src_vid))
+            if self.pre_contrastive_loss:
+                assert normalized_src_txt is not None
+                out['aux_outputs'][0].update(dict(src_txt=normalized_src_txt, src_vid=normalized_src_vid))
         #print("out['aux_outputs']:", len(out['aux_outputs']))
         #print("out:", out.keys())
         return out
@@ -269,6 +309,9 @@ class SetCriterion(nn.Module):
         assert 'pred_spans' in outputs
         targets = targets["span_labels"]
         idx = self._get_src_permutation_idx(indices)
+        #print("pred_spans:", outputs['pred_spans'].shape)   # (batch_size, 10, 2)
+        #print("saliency_all_labels",  targets["saliency_all_labels"].shape)
+        #print("")
         src_spans = outputs['pred_spans'][idx]  # (#spans, max_v_l * 2)
         tgt_spans = torch.cat([t['spans'][i] for t, (_, i) in zip(targets, indices)], dim=0)  # (#spans, 2)
         if self.span_loss_type == "l1":
@@ -318,7 +361,7 @@ class SetCriterion(nn.Module):
         """higher scores for positive clips"""
         if "saliency_pos_labels" not in targets:
             return {"loss_saliency": 0}
-
+        #print(targets.keys())
         vid_token_mask = outputs["video_mask"]
 
         # Neg pair loss
@@ -329,7 +372,8 @@ class SetCriterion(nn.Module):
 
         saliency_scores = outputs["saliency_scores"].clone()  # (N, L)
         saliency_contrast_label = targets["saliency_all_labels"]
-
+        for i in range(saliency_contrast_label.shape[0]):
+            saliency_contrast_label[i, saliency_contrast_label[i] == 0] = 100
         saliency_scores = torch.cat([saliency_scores, saliency_scores_neg], dim=1)
         saliency_contrast_label = torch.cat([saliency_contrast_label, torch.zeros_like(saliency_contrast_label)], dim=1)
 
@@ -359,7 +403,7 @@ class SetCriterion(nn.Module):
             # softmax
             exp_logits = torch.exp(logits)
             log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True) + 1e-6)
-
+            #print("log_prob", log_prob.shape, "vid_token_mask", vid_token_mask.shape, "pos_mask", pos_mask.shape)
             mean_log_prob_pos = (pos_mask * log_prob * vid_token_mask).sum(1) / (pos_mask.sum(1) + 1e-6)
 
             loss = - mean_log_prob_pos * batch_drop_mask
@@ -379,12 +423,84 @@ class SetCriterion(nn.Module):
             [saliency_scores[batch_indices, neg_indices[:, col_idx]] for col_idx in range(num_pairs)], dim=1)
         loss_saliency = torch.clamp(self.saliency_margin + neg_scores - pos_scores, min=0).sum() \
                         / (len(pos_scores) * num_pairs) * 2  # * 2 to keep the loss the same scale
-
+        #print("pos_indices", pos_indices.shape)
         # print(loss_saliency, loss_rank_contrastive)
         # loss_saliency = loss_saliency + loss_rank_contrastive
         loss_saliency = loss_saliency + loss_rank_contrastive + loss_neg_pair
         # loss_saliency = loss_rank_contrastive
         return {"loss_saliency": loss_saliency}
+
+    def loss_pooling_contrastive(self, outputs, targets, indices, log=True, temperature=0.07):
+        # 텍스트 및 비디오 풀링 함수
+        def pool_embeddings(embeddings):
+            # 평균 풀링
+            return torch.mean(embeddings, dim=1)
+
+        # Get embeddings
+        vid_embeddings = outputs["src_vid"]  # (batch, L_vid, d)
+        txt_embeddings = outputs["src_txt"]  # (batch, L_txt, d)
+
+        # Pooling embeddings
+        vid_pooled = pool_embeddings(vid_embeddings)  # (batch, d)
+        txt_pooled = pool_embeddings(txt_embeddings)  # (batch, d)
+
+        # Compute similarity matrix
+        sim_matrix = torch.matmul(txt_pooled, vid_pooled.t()) / temperature  # (batch, batch)
+
+        # Calculate contrastive loss
+        batch_size = vid_embeddings.size(0)
+        labels = torch.arange(batch_size).long().to(vid_embeddings.device)
+        loss = F.cross_entropy(sim_matrix, labels)
+
+        return {"loss_pre_contrastive": loss}
+    def loss_pre_contrastive(self, outputs, targets, indices, log=True, temperature=0.07):
+        """
+        vid_embeddings: Tensor of shape (batch, L_vid, d) - Normalized video embeddings
+        txt_embeddings: Tensor of shape (batch, L_txt, d) - Normalized text embeddings
+        temperature: A temperature scaling factor (a hyperparameter to adjust the distribution sharpness)
+        """
+        #print(self.use_matcher)
+        #print(outputs.keys())
+        vid_embeddings = outputs["src_vid"] # (batch, L_vid, d)
+        txt_embeddings = outputs["src_txt"] # (batch, L_txt, d)
+        #print("indices", indices)
+        # Compute similarity matrix
+        sim_matrix = torch.matmul(txt_embeddings, vid_embeddings.transpose(1, 2)) / temperature # (batch, L_txt, L_vid)
+
+        # Calculate contrastive loss (e.g., InfoNCE loss)
+        batch_size, txt_len, _ = txt_embeddings.size()
+        _, vid_len, _ = vid_embeddings.size()
+
+        # Reshape similarity matrix for ease of use
+        sim_matrix_flat = sim_matrix.view(batch_size * txt_len, vid_len)
+
+        # Calculate InfoNCE loss
+        logits_max, _ = torch.max(sim_matrix_flat, dim=1, keepdim=True)
+        logits = sim_matrix_flat - logits_max.detach()
+        exp_logits = torch.exp(logits)
+        log_prob = logits - torch.log(exp_logits.sum(dim=1, keepdim=True) + 1e-6)
+
+        # Create positive sample mask
+        saliency_contrast_label = targets["saliency_all_labels"]
+        loss_pre_contrastive = 0.
+
+        for rand_idx in range(1, 12):
+
+            pos_mask = (saliency_contrast_label >= rand_idx)
+            pos_mask_expanded = pos_mask.unsqueeze(1).expand(-1, txt_len, -1) # (batch, L_txt, L_vid)
+            pos_mask_flat = pos_mask_expanded.reshape(batch_size * txt_len, vid_len)    # (batch * L_txt, L_vid)
+
+            #print("pos_mask_flat", pos_mask_flat.shape, "log_prob", log_prob.shape)
+            # Apply positive sample mask to log_prob
+            pos_log_prob = log_prob[pos_mask_flat]
+
+            # Calculate loss using positive samples
+            loss = -pos_log_prob.mean()
+            loss_pre_contrastive += loss
+        #print("loss", loss)
+        loss_pre_contrastive = loss_pre_contrastive / 12
+        return {"loss_pre_contrastive": loss_pre_contrastive}
+    
 
     def loss_contrastive_align(self, outputs, targets, indices, log=True):
         """encourage higher scores between matched query span and input text"""
@@ -468,7 +584,7 @@ class SetCriterion(nn.Module):
             "labels": self.loss_labels,
             "contrastive_align": self.loss_contrastive_align,
             "saliency": self.loss_saliency,
-            "contrastive_align_vid_txt": self.loss_contrastive_align_vid_txt,
+            "pre_contrastive": self.loss_pooling_contrastive,
         }
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, targets, indices, **kwargs)
@@ -590,6 +706,7 @@ def build_model(args):
             span_loss_type=args.span_loss_type,
             use_txt_pos=args.use_txt_pos,
             n_input_proj=args.n_input_proj,
+            pre_contrastive_loss=args.pre_contrastive_loss,
         )
     else:
         model = QDDETR(
@@ -607,6 +724,7 @@ def build_model(args):
             span_loss_type=args.span_loss_type,
             use_txt_pos=args.use_txt_pos,
             n_input_proj=args.n_input_proj,
+            pre_contrastive_loss=args.pre_contrastive_loss,
         )
 
     matcher = build_matcher(args)
@@ -616,7 +734,9 @@ def build_model(args):
                    "loss_saliency": args.lw_saliency}
     if args.contrastive_align_loss:
         weight_dict["loss_contrastive_align"] = args.contrastive_align_loss_coef
-        weight_dict["loss_contrastive_align_vid_txt"] = 0.0 #args.contrastive_align_loss_coef
+
+    if args.pre_contrastive_loss:
+        weight_dict["loss_pre_contrastive"] = args.pre_contrastive_loss_coef
     # TODO this is a hack
     if args.aux_loss:
         aux_weight_dict = {}
@@ -627,7 +747,8 @@ def build_model(args):
     losses = ['spans', 'labels', 'saliency']
     if args.contrastive_align_loss:
         losses += ["contrastive_align"]
-        losses += ["contrastive_align_vid_txt"]
+    if args.pre_contrastive_loss:
+        losses += ["pre_contrastive"]
     # For tvsum dataset
     use_matcher = not (args.dset_name == 'tvsum')
         

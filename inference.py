@@ -14,6 +14,7 @@ from qd_detr.config import TestOptions
 from qd_detr.model import build_model
 from qd_detr.span_utils import span_cxw_to_xx
 from qd_detr.start_end_dataset import StartEndDataset, start_end_collate, prepare_batch_inputs
+
 #from qd_detr.start_end_dataset_audio_random import \
 from qd_detr.start_end_dataset_audio import \
     StartEndDataset_audio, start_end_collate_audio, prepare_batch_inputs_audio
@@ -230,6 +231,8 @@ def compute_mr_results(model, eval_loader, opt, epoch_i=None, criterion=None, tb
         if criterion:
             loss_dict = criterion(outputs, targets)
             weight_dict = criterion.weight_dict
+            #print(f"loss_dict: {loss_dict}")
+            #print(f"weight_dict: {weight_dict}")
             losses = sum(loss_dict[k] * weight_dict[k] for k in loss_dict.keys() if k in weight_dict)
             loss_dict["loss_overall"] = float(losses)  # for logging only
             for k, v in loss_dict.items():
@@ -335,7 +338,7 @@ def setup_model(opt):
     return model, criterion, optimizer, lr_scheduler
 
 
-def start_inference(train_opt=None, split=None, splitfile=None, q2_feat_dir=None):
+def start_inference(train_opt=None, split=None, splitfile=None, q2_feat_dir=None, q3_feat_dir=None, q4_feat_dir=None):
     if train_opt is not None:
         opt = TestOptions().parse(train_opt.a_feat_dir)
     else:
@@ -366,6 +369,8 @@ def start_inference(train_opt=None, split=None, splitfile=None, q2_feat_dir=None
             v_feat_dirs=opt.v_feat_dirs,
             q_feat_dir=opt.t_feat_dir,
             q2_feat_dir=opt.t2_feat_dir if opt.t2_feat_dir is not None else q2_feat_dir,
+            q3_feat_dir=opt.t3_feat_dir if opt.t3_feat_dir is not None else q3_feat_dir,
+            q4_feat_dir=opt.t4_feat_dir if opt.t4_feat_dir is not None else q4_feat_dir,
             q_feat_type="last_hidden_state",
             max_q_l=opt.max_q_l,
             max_v_l=opt.max_v_l,
@@ -379,6 +384,7 @@ def start_inference(train_opt=None, split=None, splitfile=None, q2_feat_dir=None
             span_loss_type=opt.span_loss_type,
             txt_drop_ratio=0,
             dset_domain=opt.dset_domain,
+            #ex_type='test'
         )
     else:
         print("Video+Audio Evaluation")
@@ -388,6 +394,8 @@ def start_inference(train_opt=None, split=None, splitfile=None, q2_feat_dir=None
             v_feat_dirs=opt.v_feat_dirs,
             q_feat_dir=opt.t_feat_dir,
             q2_feat_dir=opt.t2_feat_dir if opt.t2_feat_dir is not None else q2_feat_dir,
+            q3_feat_dir=opt.t3_feat_dir if opt.t3_feat_dir is not None else q3_feat_dir,
+            q4_feat_dir=opt.t4_feat_dir if opt.t4_feat_dir is not None else q4_feat_dir,
             a_feat_dir=opt.a_feat_dir,
             q_feat_type="last_hidden_state",
             max_q_l=opt.max_q_l,
@@ -402,6 +410,7 @@ def start_inference(train_opt=None, split=None, splitfile=None, q2_feat_dir=None
             span_loss_type=opt.span_loss_type,
             txt_drop_ratio=0,
             dset_domain=opt.dset_domain,
+            #ex_type='test'
         )
 
 
@@ -426,6 +435,8 @@ if __name__ == '__main__':
     split = argv[4] # val or test
     splitfile = argv[6] # eval_path
     q2_feat_dir = argv[8]   # q2_feat_dir
+    q3_feat_dir = argv[10]  # q3_feat_dir
+    q4_feat_dir = argv[12]  # q4_feat_dir
     # print("split : ",split)
     # print("splitfile : ",splitfile)
     # print("q2_feat_dir : ",q2_feat_dir)

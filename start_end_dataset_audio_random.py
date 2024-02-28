@@ -30,7 +30,7 @@ class StartEndDataset_audio(Dataset):
                  max_q_l=75, max_v_l=75, data_ratio=1.0, ctx_mode="video",
                  normalize_v=True, normalize_t=True, load_labels=True,
                  clip_len=2, max_windows=5, span_loss_type="l1", txt_drop_ratio=0,
-                 dset_domain=None):
+                 dset_domain=None, ex_type="train"):
         self.dset_name = dset_name
         self.data_path = data_path
         self.data_ratio = data_ratio
@@ -53,6 +53,7 @@ class StartEndDataset_audio(Dataset):
         self.max_windows = max_windows  # maximum number of windows to use as labels
         self.span_loss_type = span_loss_type
         self.txt_drop_ratio = txt_drop_ratio
+        self.ex_type = ex_type
         if "val" in data_path or "test" in data_path:
             assert txt_drop_ratio == 0
 
@@ -301,16 +302,21 @@ class StartEndDataset_audio(Dataset):
         else:
             # QVhighlight dataset
             # 50% 확률로 q_feat_path를 선택
-            if random.random() < 0.5:
-                #print("text")
+            if self.ex_type == "test":
                 q_feat_path = join(self.q_feat_dir, f"qid{qid}.npz")
                 q_feat = np.load(q_feat_path)[self.q_feat_type].astype(np.float32)
             else:
-                #print("paraphrase")
-                q_feat_path = join(self.q2_feat_dir, f"qid{qid}.npz")
-                q_feat = np.load(q_feat_path)['arr_0'].astype(np.float32)
-            #q_feat = np.load(q_feat_path)[self.q_feat_type].astype(np.float32)
-            #print("qid:", qid, q_feat)
+                if random.random() < 0.5:
+                    #print("text")
+                    q_feat_path = join(self.q_feat_dir, f"qid{qid}.npz")
+                    q_feat = np.load(q_feat_path)[self.q_feat_type].astype(np.float32)
+                else:
+                    #print("paraphrase")
+                    q_feat_path = join(self.q2_feat_dir, f"qid{qid}.npz")
+                    q_feat = np.load(q_feat_path)['arr_0'].astype(np.float32)
+                    
+                #q_feat = np.load(q_feat_path)[self.q_feat_type].astype(np.float32)
+                #print("qid:", qid, q_feat)
             if self.q_feat_type == "last_hidden_state":
                 q_feat = q_feat[:self.max_q_l]
             #print("qid:", qid, q_feat.shape, q_feat.dtype)
